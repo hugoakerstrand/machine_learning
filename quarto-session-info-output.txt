@@ -1,0 +1,25 @@
+─ Session info ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ setting  value
+ version  R version 4.4.1 (2024-06-14 ucrt)
+ os       Windows 11 x64 (build 26100)
+ system   x86_64, mingw32
+ ui       RStudio
+ language (EN)
+ collate  English_United States.utf8
+ ctype    English_United States.utf8
+ tz       Europe/Stockholm
+ date     2024-12-07
+ rstudio  2024.09.1+394 Cranberry Hibiscus (desktop)
+ pandoc   NA
+
+─ Packages ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ package     * version date (UTC) lib source
+ cli           3.6.3   2024-06-21 [1] CRAN (R 4.4.1)
+ knitr         1.48    2024-07-07 [1] CRAN (R 4.4.1)
+ sessioninfo   1.2.2   2021-12-06 [1] CRAN (R 4.4.1)
+ xfun          0.47    2024-08-17 [1] CRAN (R 4.4.1)
+
+ [1] C:/Users/hugoa/AppData/Local/R/win-library/4.4
+ [2] C:/Program Files (x86)/R/R-4.4.1/library
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
