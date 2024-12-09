@@ -13,6 +13,7 @@ library(mclust)
 library(flowCore)
 library(tidyverse)
 library(patchwork)
+library(tidymodels)
 data("GvHD")
 ```
 
@@ -44,3 +45,11 @@ plot_list <- gvhd_tibble$exprs_tibble |> purrr::map(function(.x) {
 
 wrap_plots(plot_list[1:4])
 ```
+```{r, echo=FALSE}
+gvhd_tibble <- gvhd_tibble |> mutate(
+  initial_split = purrr::map(exprs_tibble, ~ initial_split(.x, strata = `FSC-H`, prop = 0.8)),
+  training = purrr::map(initial_split, ~ training(.x)),
+  test = purrr::map(initial_split, ~ testing(.x))
+)
+```
+
