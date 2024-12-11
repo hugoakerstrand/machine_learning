@@ -1,0 +1,105 @@
+---
+title: "Machine learning and facs gating: Cells (FSC-H vs SSC-H)"
+author: "Hugo Akerstrand"
+date: "2024-12-09"
+output: 
+  html_document: 
+    keep_md: true
+---
+
+# Welcome!
+
+This is a document that aims to explore different ways of gating flow cytometry
+data in R, primarily using a tidymodels approach.
+
+To do this, I am using the data set `GvHD` from `flowCore`. Note that I am not 
+compensating or cleaning the data, since this is not meant to represent a complete
+flow cytometry analysis pipeline.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(mclust)
+library(flowCore)
+library(tidyverse)
+library(patchwork)
+library(tidymodels)
+library(ggridges)
+data("GvHD")
+```
+
+Start by loading the data and make it into a tibble with the relevant list columns:
+
+```{r, echo = TRUE}
+
+gvhd_tibble <- tibble(
+  exprs = purrr::map(GvHD, ~ exprs(.x)),                       # This contains detector information
+  keywords = purrr::map(GvHD, ~ keyword(.x)),                  # This contains meta data
+  exprs_tibble = purrr::map(exprs, function(.x) as_tibble(.x)) # This is for plotting
+)
+
+head(gvhd_tibble)
+```
+
+We will gate the 'cell gate' using `FSC-H` and `SSC-H` columns. First inspect the data:
+
+```{r, echo = TRUE}
+plot_list <- gvhd_tibble$exprs_tibble |> purrr::map(function(.x) {
+      ggplot(data= .x, aes(x = `FSC-H`, y = `SSC-H`)) +
+        geom_hex()
+    }
+  )
+
+wrap_plots(plot_list[1:4])
+```
+
+We clean up the data by filtering out FSC-H < 100:
+
+```{r, echo=TRUE}
+gvhd_tibble <- gvhd_tibble |> 
+  mutate(exprs_tibble = purrr::map(gvhd_tibble$exprs_tibble, ~ filter(.x, `FSC-H` > 99)))
+
+plot_list <- gvhd_tibble$exprs_tibble |> purrr::map(function(.x) {
+      ggplot(data= .x, aes(x = `FSC-H`, y = `SSC-H`)) +
+        geom_hex() +
+    scale_x_continuous(limits = c(0,1000))
+    }
+  )
+
+wrap_plots(plot_list[1:4])
+  
+```
+
+Use the cleaned data for making training and testing sets
+
+```{r, echo=TRUE}
+gvhd_tibble <- gvhd_tibble |> mutate(
+  initial_split = purrr::map(exprs_tibble, ~ initial_split(.x, strata = `FSC-H`, prop = 0.8)),
+  training = purrr::map(initial_split, ~ training(.x)),
+  test = purrr::map(initial_split, ~ testing(.x))
+)
+
+gvhd_tibble
+```
+
+Now we have a look at the recorded marker expression
+
+```{r, echo=TRUE}
+plot_list <- gvhd_tibble$exprs_tibble |> purrr::map(function(.x) {
+  .x |> 
+    pivot_longer(where(is.numeric)) |>
+    ggplot(aes(x = log10(value + 1), y = name)) +
+      ggridges::geom_density_ridges() 
+    }
+  )
+
+wrap_plots(plot_list[1:4])
+
+```
+
+It looks like FL2-A is a clearly separated population, which we can use for 
+semi-supervised clustering.
+
+We will try three different methods for gating the FSC-H vs SSC-H
+1) `dbscan`
+2) `Mclust`
+3) semi-supervised clustering and random forest
