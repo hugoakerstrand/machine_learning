@@ -7,7 +7,7 @@ output:
     keep_md: true
 ---
 
-# Welcome!
+## Welcome!
 
 This is a document that aims to explore different ways of gating flow cytometry
 data in R, primarily using a tidymodels approach.
@@ -56,7 +56,7 @@ We clean up the data by filtering out FSC-H < 100:
 
 ```{r, echo=TRUE}
 gvhd_tibble <- gvhd_tibble |> 
-  mutate(exprs_tibble = purrr::map(gvhd_tibble$exprs_tibble, ~ filter(.x, `FSC-H` > 99)))
+  mutate(exprs_tibble = purrr::map(gvhd_tibble$exprs_tibble, ~ filter(.x, `FSC-H` > 99 & `FSC-H` < 1000 & `SSC-H` < 1000)))
 
 plot_list <- gvhd_tibble$exprs_tibble |> purrr::map(function(.x) {
       ggplot(data= .x, aes(x = `FSC-H`, y = `SSC-H`)) +
@@ -69,7 +69,7 @@ wrap_plots(plot_list[1:4])
   
 ```
 
-Use the cleaned data for making training and testing sets
+Use the cleaned data for making training and testing sets:
 
 ```{r, echo=TRUE}
 gvhd_tibble <- gvhd_tibble |> mutate(
@@ -78,10 +78,17 @@ gvhd_tibble <- gvhd_tibble |> mutate(
   test = purrr::map(initial_split, ~ testing(.x))
 )
 
-gvhd_tibble
+plot_list <- gvhd_tibble$training |> purrr::map(function(.x) {
+      ggplot(data= .x, aes(x = `FSC-H`, y = `SSC-H`)) +
+        geom_hex() +
+    scale_x_continuous(limits = c(0,1000))
+    }
+  )
+
+wrap_plots(plot_list[1:4])
 ```
 
-Now we have a look at the recorded marker expression
+Now we have a look at the recorded marker expression:
 
 ```{r, echo=TRUE}
 plot_list <- gvhd_tibble$exprs_tibble |> purrr::map(function(.x) {
@@ -97,9 +104,53 @@ wrap_plots(plot_list[1:4])
 ```
 
 It looks like FL2-A is a clearly separated population, which we can use for 
-semi-supervised clustering.
+semi-supervised clustering:
 
+```{r, echo=TRUE}
+fl2a_positive <- gvhd_tibble$exprs_tibble |> 
+  purrr:::map(function(.x) if_else(log10(.x$`FL2-A` + 1) > 1, 1, 0))
+```
+## Clustering
 We will try three different methods for gating the FSC-H vs SSC-H
 1) `dbscan`
 2) `Mclust`
 3) semi-supervised clustering and random forest
+
+### `dbscan`
+
+```{r, echo=TRUE}
+dbscan_recipe <- gvhd_tibble$training |> 
+  purrr:::map(function(.x) recipe(~ `FSC-H` + `SSC-H`, data = .x)) |> 
+  step_scale(all_predictors()) |>
+  step_log(all_predictors())
+```
+
+```{r, echo=TRUE}
+dbscan_prep <- dbscan_recipe[1:(length(dbscan_recipe)-1)] |> purrr:::map(function(.x) prep(.x))
+  
+dbscan_bake <- dbscan_prep |> map(function(.x) bake(.x, new_data = NULL))
+```
+
+```{r, echo=TRUE}
+dbscan_result <- dbscan_bake |> map(function(.x) dbscan::dbscan(.x, eps = 20, minPts = 20))
+```
+
+```{r, echo=TRUE}
+gvhd_tibble <- gvhd_tibble |> 
+  mutate(training = map2(.x = dbscan_result, .y = dbscan_bake, .f = function(.x, .y) augment(.x, .y)))
+```
+
+```{r, echo=TRUE}
+map(dbscan_result, function(.x) dbscan::tidy(.x))
+```
+
+```{r, echo=TRUE}
+plot_list <- gvhd_tibble$training |> purrr::map(function(.x) {
+      ggplot(data= .x, aes(x = `FSC-H`, y = `SSC-H`, color = .cluster)) +
+      geom_point() 
+    }
+  )
+
+wrap_plots(plot_list[5:10])
+  
+```

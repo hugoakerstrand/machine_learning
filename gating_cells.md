@@ -7,7 +7,7 @@ output:
     keep_md: true
 ---
 
-# Welcome!
+## Welcome!
 
 This is a document that aims to explore different ways of gating flow cytometry
 data in R, primarily using a tidymodels approach.
@@ -63,7 +63,7 @@ We clean up the data by filtering out FSC-H < 100:
 
 ``` r
 gvhd_tibble <- gvhd_tibble |> 
-  mutate(exprs_tibble = purrr::map(gvhd_tibble$exprs_tibble, ~ filter(.x, `FSC-H` > 99)))
+  mutate(exprs_tibble = purrr::map(gvhd_tibble$exprs_tibble, ~ filter(.x, `FSC-H` > 99 & `FSC-H` < 1000 & `SSC-H` < 1000)))
 
 plot_list <- gvhd_tibble$exprs_tibble |> purrr::map(function(.x) {
       ggplot(data= .x, aes(x = `FSC-H`, y = `SSC-H`)) +
@@ -75,29 +75,9 @@ plot_list <- gvhd_tibble$exprs_tibble |> purrr::map(function(.x) {
 wrap_plots(plot_list[1:4])
 ```
 
-```
-## Warning: Removed 12 rows containing non-finite outside the scale range
-## (`stat_binhex()`).
-```
-
-```
-## Warning: Removed 9 rows containing non-finite outside the scale range
-## (`stat_binhex()`).
-```
-
-```
-## Warning: Removed 12 rows containing non-finite outside the scale range
-## (`stat_binhex()`).
-```
-
-```
-## Warning: Removed 18 rows containing non-finite outside the scale range
-## (`stat_binhex()`).
-```
-
 ![](gating_cells_files/figure-html/unnamed-chunk-3-1.png)<!-- -->
 
-Use the cleaned data for making training and testing sets
+Use the cleaned data for making training and testing sets:
 
 
 ``` r
@@ -107,27 +87,19 @@ gvhd_tibble <- gvhd_tibble |> mutate(
   test = purrr::map(initial_split, ~ testing(.x))
 )
 
-gvhd_tibble
+plot_list <- gvhd_tibble$training |> purrr::map(function(.x) {
+      ggplot(data= .x, aes(x = `FSC-H`, y = `SSC-H`)) +
+        geom_hex() +
+    scale_x_continuous(limits = c(0,1000))
+    }
+  )
+
+wrap_plots(plot_list[1:4])
 ```
 
-```
-## # A tibble: 35 × 6
-##    exprs    keywords     exprs_tibble initial_split       training test    
-##    <list>   <list>       <list>       <list>              <list>   <list>  
-##  1 <dbl[…]> <named list> <tibble>     <split [2195/551]>  <tibble> <tibble>
-##  2 <dbl[…]> <named list> <tibble>     <split [1874/471]>  <tibble> <tibble>
-##  3 <dbl[…]> <named list> <tibble>     <split [2310/579]>  <tibble> <tibble>
-##  4 <dbl[…]> <named list> <tibble>     <split [5258/1316]> <tibble> <tibble>
-##  5 <dbl[…]> <named list> <tibble>     <split [6850/1715]> <tibble> <tibble>
-##  6 <dbl[…]> <named list> <tibble>     <split [2678/671]>  <tibble> <tibble>
-##  7 <dbl[…]> <named list> <tibble>     <split [9838/2461]> <tibble> <tibble>
-##  8 <dbl[…]> <named list> <tibble>     <split [1615/407]>  <tibble> <tibble>
-##  9 <dbl[…]> <named list> <tibble>     <split [9261/2317]> <tibble> <tibble>
-## 10 <dbl[…]> <named list> <tibble>     <split [7984/1998]> <tibble> <tibble>
-## # ℹ 25 more rows
-```
+![](gating_cells_files/figure-html/unnamed-chunk-4-1.png)<!-- -->
 
-Now we have a look at the recorded marker expression
+Now we have a look at the recorded marker expression:
 
 
 ``` r
@@ -143,26 +115,348 @@ wrap_plots(plot_list[1:4])
 ```
 
 ```
-## Picking joint bandwidth of 0.109
+## Picking joint bandwidth of 0.108
 ```
 
 ```
-## Picking joint bandwidth of 0.0974
+## Picking joint bandwidth of 0.0965
 ```
 
 ```
-## Picking joint bandwidth of 0.0457
+## Picking joint bandwidth of 0.0451
 ```
 
 ```
-## Picking joint bandwidth of 0.044
+## Picking joint bandwidth of 0.0437
 ```
 
 ![](gating_cells_files/figure-html/unnamed-chunk-5-1.png)<!-- -->
 
 It looks like FL2-A is a clearly separated population, which we can use for 
-semi-supervised clustering.
+semi-supervised clustering:
 
-We will try three different methods for gating the FSC-H vs SSC-H:
-1) `Mclust`
-2) `dbscan`
+
+``` r
+fl2a_positive <- gvhd_tibble$exprs_tibble |> 
+  purrr:::map(function(.x) if_else(log10(.x$`FL2-A` + 1) > 1, 1, 0))
+```
+## Clustering
+We will try three different methods for gating the FSC-H vs SSC-H
+1) `dbscan`
+2) `Mclust`
+3) semi-supervised clustering and random forest
+
+### `dbscan`
+
+
+``` r
+dbscan_recipe <- gvhd_tibble$training |> 
+  purrr:::map(function(.x) recipe(~ `FSC-H` + `SSC-H`, data = .x)) |> 
+  step_scale(all_predictors()) |>
+  step_log(all_predictors())
+```
+
+
+``` r
+dbscan_prep <- dbscan_recipe[1:(length(dbscan_recipe)-1)] |> purrr:::map(function(.x) prep(.x))
+  
+dbscan_bake <- dbscan_prep |> map(function(.x) bake(.x, new_data = NULL))
+```
+
+
+``` r
+dbscan_result <- dbscan_bake |> map(function(.x) dbscan::dbscan(.x, eps = 20, minPts = 20))
+```
+
+
+``` r
+gvhd_tibble <- gvhd_tibble |> 
+  mutate(training = map2(.x = dbscan_result, .y = dbscan_bake, .f = function(.x, .y) augment(.x, .y)))
+```
+
+
+``` r
+map(dbscan_result, function(.x) dbscan::tidy(.x))
+```
+
+```
+## [[1]]
+## # A tibble: 4 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         627 TRUE 
+## 2 1        1455 FALSE
+## 3 2          36 FALSE
+## 4 3          21 FALSE
+## 
+## [[2]]
+## # A tibble: 2 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         377 TRUE 
+## 2 1        1477 FALSE
+## 
+## [[3]]
+## # A tibble: 2 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         181 TRUE 
+## 2 1        2107 FALSE
+## 
+## [[4]]
+## # A tibble: 2 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         332 TRUE 
+## 2 1        4890 FALSE
+## 
+## [[5]]
+## # A tibble: 6 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         931 TRUE 
+## 2 1        5301 FALSE
+## 3 2         455 FALSE
+## 4 3          20 FALSE
+## 5 4          20 FALSE
+## 6 5          20 FALSE
+## 
+## [[6]]
+## # A tibble: 5 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         621 TRUE 
+## 2 1        1870 FALSE
+## 3 2          22 FALSE
+## 4 3          25 FALSE
+## 5 4          20 FALSE
+## 
+## [[7]]
+## # A tibble: 3 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         822 TRUE 
+## 2 1        8516 FALSE
+## 3 2          28 FALSE
+## 
+## [[8]]
+## # A tibble: 2 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         248 TRUE 
+## 2 1        1355 FALSE
+## 
+## [[9]]
+## # A tibble: 2 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         370 TRUE 
+## 2 1        8885 FALSE
+## 
+## [[10]]
+## # A tibble: 2 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         480 TRUE 
+## 2 1        7476 FALSE
+## 
+## [[11]]
+## # A tibble: 2 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         293 TRUE 
+## 2 1        8680 FALSE
+## 
+## [[12]]
+## # A tibble: 2 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         485 TRUE 
+## 2 1        9337 FALSE
+## 
+## [[13]]
+## # A tibble: 2 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         335 TRUE 
+## 2 1        9233 FALSE
+## 
+## [[14]]
+## # A tibble: 2 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         259 TRUE 
+## 2 1        2783 FALSE
+## 
+## [[15]]
+## # A tibble: 3 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         652 TRUE 
+## 2 1       10325 FALSE
+## 3 2          95 FALSE
+## 
+## [[16]]
+## # A tibble: 2 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         330 TRUE 
+## 2 1        4647 FALSE
+## 
+## [[17]]
+## # A tibble: 3 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         356 TRUE 
+## 2 1       12336 FALSE
+## 3 2          27 FALSE
+## 
+## [[18]]
+## # A tibble: 4 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         241 TRUE 
+## 2 1       26740 FALSE
+## 3 2          21 FALSE
+## 4 3          30 FALSE
+## 
+## [[19]]
+## # A tibble: 3 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         601 TRUE 
+## 2 1       20615 FALSE
+## 3 2          29 FALSE
+## 
+## [[20]]
+## # A tibble: 3 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         461 TRUE 
+## 2 1        8467 FALSE
+## 3 2          60 FALSE
+## 
+## [[21]]
+## # A tibble: 2 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         626 TRUE 
+## 2 1        9287 FALSE
+## 
+## [[22]]
+## # A tibble: 2 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         461 TRUE 
+## 2 1        8507 FALSE
+## 
+## [[23]]
+## # A tibble: 3 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         380 TRUE 
+## 2 1        4599 FALSE
+## 3 2          24 FALSE
+## 
+## [[24]]
+## # A tibble: 2 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         153 TRUE 
+## 2 1        2130 FALSE
+## 
+## [[25]]
+## # A tibble: 2 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         248 TRUE 
+## 2 1        3437 FALSE
+## 
+## [[26]]
+## # A tibble: 2 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         442 TRUE 
+## 2 1       21989 FALSE
+## 
+## [[27]]
+## # A tibble: 2 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         457 TRUE 
+## 2 1       18055 FALSE
+## 
+## [[28]]
+## # A tibble: 5 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         851 TRUE 
+## 2 1        7759 FALSE
+## 3 2         493 FALSE
+## 4 3          27 FALSE
+## 5 4          27 FALSE
+## 
+## [[29]]
+## # A tibble: 2 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         606 TRUE 
+## 2 1       10643 FALSE
+## 
+## [[30]]
+## # A tibble: 2 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         274 TRUE 
+## 2 1        1887 FALSE
+## 
+## [[31]]
+## # A tibble: 2 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         261 TRUE 
+## 2 1        1577 FALSE
+## 
+## [[32]]
+## # A tibble: 2 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         313 TRUE 
+## 2 1        3056 FALSE
+## 
+## [[33]]
+## # A tibble: 2 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0        1074 TRUE 
+## 2 1       12712 FALSE
+## 
+## [[34]]
+## # A tibble: 3 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         924 TRUE 
+## 2 1       14106 FALSE
+## 3 2          50 FALSE
+## 
+## [[35]]
+## # A tibble: 3 × 3
+##   cluster  size noise
+##   <fct>   <int> <lgl>
+## 1 0         772 TRUE 
+## 2 1       14327 FALSE
+## 3 2          21 FALSE
+```
+
+
+``` r
+plot_list <- gvhd_tibble$training |> purrr::map(function(.x) {
+      ggplot(data= .x, aes(x = `FSC-H`, y = `SSC-H`, color = .cluster)) +
+      geom_point() 
+    }
+  )
+
+wrap_plots(plot_list[5:10])
+```
+
+![](gating_cells_files/figure-html/unnamed-chunk-12-1.png)<!-- -->
