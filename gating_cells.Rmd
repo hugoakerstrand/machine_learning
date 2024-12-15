@@ -18,7 +18,7 @@ flow cytometry analysis pipeline.
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-library(mclust)
+library(dbscan)
 library(flowCore)
 library(tidyverse)
 library(patchwork)
@@ -52,7 +52,7 @@ plot_list <- gvhd_tibble$exprs_tibble |> purrr::map(function(.x) {
 wrap_plots(plot_list[1:4])
 ```
 
-We clean up the data by filtering out FSC-H < 100:
+We clean up the data by filtering on `FSC-H` and `SSC-H`:
 
 ```{r, echo=TRUE}
 gvhd_tibble <- gvhd_tibble |> 
@@ -119,7 +119,8 @@ We will try three different methods for gating the FSC-H vs SSC-H
 ### `dbscan`
 
 ```{r, echo=TRUE}
-dbscan_recipe <- gvhd_tibble$training |> 
+dbscan_recipe <- gvhd_tibble$exprs_tibble[[1]] |> 
+  select(`FSC-H`, `SSC-H`)
   purrr:::map(function(.x) recipe(~ `FSC-H` + `SSC-H`, data = .x) |> step_scale(all_predictors()) |> step_log(all_predictors())) 
 ```
 
@@ -189,4 +190,18 @@ plot_list <- gvhd_tibble$training |> purrr::map(function(.x) {
 
 wrap_plots(plot_list[1:4])
   
+```
+
+## Semi-supervised
+
+```{r, echo = TRUE}
+plot_list <- gvhd_tibble$exprs_tibble |> purrr::map(function(.x) {
+    .x |> 
+   dplyr::filter(`FL2-A` > 300 ) |> 
+   ggplot(aes(x = `FSC-H`, y = `SSC-H`)) +
+        geom_hex()
+    }
+  )
+
+wrap_plots(plot_list[1:4])
 ```
