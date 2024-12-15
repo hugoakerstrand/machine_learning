@@ -1,0 +1,67 @@
+---
+title: "flowClust"
+author: "hugoakerstrand"
+date: "2024-12-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(flowClust)
+library(flowCore)
+library(tidyverse)
+library(patchwork)
+library(tidymodels)
+library(ggridges)
+data("GvHD")
+```
+
+Start by loading the data and make it into a tibble with the relevant list columns:
+
+```{r, echo = TRUE}
+
+gvhd_tibble <- tibble(
+  exprs = purrr::map(GvHD, ~ exprs(.x)),              # This contains event data
+  keywords = purrr::map(GvHD, ~ keyword(.x)),         # This contains meta data
+  exprs_tibble = purrr::map(exprs, function(.x) as_tibble(.x)) # This is for plotting
+)
+
+head(gvhd_tibble)
+```
+
+We will gate the 'cell gate' using `FSC-H` and `SSC-H` columns. First inspect the data:
+
+```{r, echo = FALSE, warning=FALSE}
+dotplot_list <- gvhd_tibble$exprs_tibble |> purrr::map(function(.x) {
+      ggplot(data= .x, aes(x = `FSC-H`, y = `SSC-H`)) +
+        geom_hex()
+    }
+  )
+
+fsch_list <- gvhd_tibble$exprs_tibble |> purrr::map(function(.x) {
+      ggplot(data= .x, aes(x = `FSC-H`)) +
+        geom_histogram()
+    }
+  )
+
+ssch_list <- gvhd_tibble$exprs_tibble |> purrr::map(function(.x) {
+      ggplot(data= .x, aes(x = `SSC-H`)) +
+        geom_histogram()
+    }
+  )
+
+indeces <- 1:4
+
+wrap_plots(c(dotplot_list[indeces], fsch_list[indeces], ssch_list[indeces]), nrow = 3, guides = 'collect')
+```
+
+```{r}
+cell <- flowClust(gvhd_tibble$exprs_tibble[[3]], varNames = c('FSC-H'), K = 2, nu = 1, )
+```
+
+```{r}
+bind_cols(gvhd_tibble$exprs_tibble, cell_cluster = as.factor(cell@label)) |> 
+  ggplot(aes(x = `FSC.H`, color = cell_cluster)) +
+        geom_histogram()
+```
+

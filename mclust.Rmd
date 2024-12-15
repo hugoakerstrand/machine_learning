@@ -1,0 +1,162 @@
+---
+title: "mclust"
+author: "hugoakerstrand"
+date: "2024-12-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(mclust)
+library(flowCore)
+library(tidyverse)
+library(patchwork)
+library(tidymodels)
+library(ggridges)
+data("GvHD")
+```
+
+Start by loading the data and make it into a tibble with the relevant list columns:
+
+```{r, echo = TRUE}
+
+gvhd_tibble <- tibble(
+  exprs = purrr::map(GvHD, ~ exprs(.x)),                       # This contains detector information
+  keywords = purrr::map(GvHD, ~ keyword(.x)),                  # This contains meta data
+  exprs_tibble = purrr::map(exprs, function(.x) as_tibble(.x)) # This is for plotting
+)
+
+head(gvhd_tibble)
+```
+
+We will gate the 'cell gate' using `FSC-H` and `SSC-H` columns. First inspect the data:
+
+```{r, echo = FALSE, warning=FALSE}
+dotplot_list <- gvhd_tibble$exprs_tibble |> purrr::map(function(.x) {
+      ggplot(data= .x, aes(x = `FSC-H`, y = `SSC-H`)) +
+        geom_hex()
+    }
+  )
+
+fsch_list <- gvhd_tibble$exprs_tibble |> purrr::map(function(.x) {
+      ggplot(data= .x, aes(x = `FSC-H`)) +
+        geom_histogram()
+    }
+  )
+
+ssch_list <- gvhd_tibble$exprs_tibble |> purrr::map(function(.x) {
+      ggplot(data= .x, aes(x = `SSC-H`)) +
+        geom_histogram()
+    }
+  )
+
+indeces <- 1:4
+
+wrap_plots(c(dotplot_list[indeces], fsch_list[indeces], ssch_list[indeces]), nrow = 3, guides = 'collect')
+```
+
+```{r}
+mclust_rec <- recipe(~ `FSC-H` + `SSC-H`, data = gvhd_tibble$exprs_tibble[[2]]) |> 
+  step_filter(`SSC-H` < 1000 & `FSC-H` < 1000) |> 
+  step_BoxCox(all_predictors())
+```
+
+```{r}
+mclust_prep <- prep(mclust_rec, gvhd_tibble$exprs_tibble[[2]])
+
+mclust_bake <- bake(mclust_prep, gvhd_tibble$exprs_tibble[[2]]) 
+
+p1 <- gvhd_tibble$exprs_tibble[[2]] |> ggplot(aes(x = `FSC-H`, y = `SSC-H`)) +
+  geom_point()
+
+p2<- mclust_bake |> ggplot(aes(x = `FSC-H`, y = `SSC-H`)) +
+  geom_point()
+
+p1 + p2
+```
+```{r}
+mclust_res <- Mclust(mclust_bake, G = 2)
+
+tidy(mclust_res)
+
+mclust_aug <- augment(mclust_res, mclust_bake)
+```
+
+```{r}
+
+p1 <- bind_cols(gvhd_tibble$exprs_tibble[[2]], cluster = mclust_aug$.class) |> 
+  ggplot(aes(x = `FSC-H`, y = `SSC-H`, colour = cluster)) +
+  geom_point()
+
+p2 <- bind_cols(gvhd_tibble$exprs_tibble[[2]], cluster = mclust_aug$.class) |> 
+  dplyr::filter(cluster == 1) |> 
+  ggplot(aes(x = `FSC-H`, y = `SSC-H`)) +
+  geom_hex() +
+  scale_x_continuous(limits = c(0,1000)) +
+  scale_y_continuous(limits = c(0,1000))
+
+p1 + p2
+```
+
+```{r}
+gvhd_tibble$exprs_tibble[[2]] |> 
+  select(1:2) |> 
+  dbscan::kNNdistplot(minPts = 25)
+
+abline(h = 50)
+```
+
+```{r}
+dbscan_res <- gvhd_tibble$exprs_tibble[[2]] |> 
+  select(1:2) |> 
+  dbscan::dbscan(minPts = 25, eps = 50)
+```
+
+```{r}
+augment(dbscan_res, gvhd_tibble$exprs_tibble[[2]] |> select(1:2)) |> 
+  ggplot(aes(x = `FSC-H`, y = `SSC-H`, colour = .cluster)) +
+  geom_point()
+```
+
+```{r}
+dbscan_filt <- augment(dbscan_res, gvhd_tibble$exprs_tibble[[2]] |> select(1:2)) |> 
+  dplyr::filter(.cluster != 0) |> 
+  select(1:2)
+
+```
+
+```{r}
+mclust_prep <- prep(mclust_rec, dbscan_filt)
+
+mclust_bake <- bake(mclust_prep, dbscan_filt) 
+
+p1 <- dbscan_filt |> ggplot(aes(x = `FSC-H`, y = `SSC-H`)) +
+  geom_point()
+
+p2<- mclust_bake |> ggplot(aes(x = `FSC-H`, y = `SSC-H`)) +
+  geom_point()
+
+p1 + p2
+```
+```{r}
+mclust_res <- Mclust(mclust_bake, G = 2)
+
+tidy(mclust_res)
+
+mclust_aug <- augment(mclust_res, mclust_bake)
+```
+
+```{r}
+p1 <- bind_cols(dbscan_filt, cluster = mclust_aug$.class) |> 
+  ggplot(aes(x = `FSC-H`, y = `SSC-H`, colour = cluster)) +
+  geom_point()
+
+p2 <- bind_cols(dbscan_filt, cluster = mclust_aug$.class) |> 
+  dplyr::filter(cluster == 1) |> 
+  ggplot(aes(x = `FSC-H`, y = `SSC-H`)) +
+  geom_hex() +
+  scale_x_continuous(limits = c(0,1000)) +
+  scale_y_continuous(limits = c(0,1000))
+
+p1 + p2
+```
