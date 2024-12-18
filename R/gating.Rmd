@@ -1,0 +1,129 @@
+---
+title: "gating"
+output: 
+  html_document: 
+    keep_md: true
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(mclust)
+library(flowCore)
+library(tidyverse)
+library(patchwork)
+library(tidymodels)
+library(ggridges)
+data("GvHD")
+```
+
+Start by loading the data and make it into a tibble with the relevant list columns:
+
+```{r, echo = TRUE}
+
+gvhd_tibble <- tibble(
+  exprs = purrr::map(GvHD, ~ exprs(.x)),                       # This contains detector information
+  keywords = purrr::map(GvHD, ~ keyword(.x)),                  # This contains meta data
+  exprs_tibble = purrr::map(exprs, function(.x) as_tibble(.x)) # This is for plotting
+)
+
+head(gvhd_tibble)
+```
+
+We will gate the 'cell gate' using `FSC-H` and `SSC-H` columns. First inspect the data:
+
+```{r, echo = FALSE, warning=FALSE}
+dotplot_list <- gvhd_tibble$exprs_tibble |> purrr::map(function(.x) {
+      ggplot(data= .x, aes(x = `FSC-H`, y = `SSC-H`)) +
+        geom_hex()
+    }
+  )
+
+fsch_list <- gvhd_tibble$exprs_tibble |> purrr::map(function(.x) {
+      ggplot(data= .x, aes(x = `FSC-H`)) +
+        geom_histogram()
+    }
+  )
+
+ssch_list <- gvhd_tibble$exprs_tibble |> purrr::map(function(.x) {
+      ggplot(data= .x, aes(x = `SSC-H`)) +
+        geom_histogram()
+    }
+  )
+
+indeces <- 1:4
+
+wrap_plots(c(dotplot_list[indeces], fsch_list[indeces], ssch_list[indeces]), nrow = 3, guides = 'collect')
+```
+
+We will start by filtering the data to remove the outliers using dbscan. It 
+requires two arguments `minPts` and `eps`. The `minPts` is the minimum number of 
+points required to form a cluster. The `eps` is the maximum distance between two 
+points to be considered in the same cluster. 
+
+The `kNNdistplot` function can be used to determine the `eps` value:
+
+```{r}
+gvhd_tibble$exprs_tibble[[2]] |> 
+  select(1:2) |> 
+  dbscan::kNNdistplot(minPts = 50)
+
+abline(h = 100)
+```
+
+```{r}
+dbscan_res <- purrr::map(gvhd_tibble$exprs_tibble, function(.x) {
+  .x |> 
+  dplyr::select(1:2) |> 
+  dbscan::dbscan(minPts = 50, eps = 100)
+  }
+)
+
+dbscan_filt <- purrr::map2(dbscan_res, gvhd_tibble$exprs_tibble, function(.x, .y) {
+  dbscan::augment(.x, .y |>  dplyr::select(1:2)) |> 
+  dplyr::filter(.cluster != 0) |> 
+  dplyr::select(1:2)
+  }
+)
+
+
+```
+
+
+
+
+
+```{r}
+mclust_rec <- recipe(~ `FSC-H` + `SSC-H`, data = dbscan_filt[[1]]) |> 
+  step_filter(`SSC-H` < 1000 & `FSC-H` < 1000) |> 
+  step_BoxCox(all_predictors())
+
+mclust_prep <- purrr::map(dbscan_filt, \(.x) recipes::prep(mclust_rec, .x)) 
+
+mclust_bake <- purrr::map2(mclust_prep, dbscan_filt, \(.x, .y) recipes::bake(.x, .y))
+
+```
+
+```{r}
+mclust_res <- purrr::map(mclust_bake, \(.x) mclust::Mclust(.x, G = 1:2))
+
+mclust_aug <- purrr::map2(mclust_res, mclust_bake, augment)
+
+dbscan_filt_clustered <- purrr::map2(dbscan_filt, mclust_aug, \(.x, .y) {
+  dplyr::bind_cols(.x, cluster = .y$.class)
+})
+
+```
+
+```{r}
+plot_list <- dbscan_filt_clustered |> 
+  purrr::map(~ ggplot(data = .x, aes(x = `FSC-H`, y = `SSC-H`, color = factor(cluster))) +
+    geom_point() +
+    theme_minimal()
+  )
+
+wrap_plots(plot_list[1:4])
+
+ggsave("gating.pdf", wrap_plots(plot_list[5:8]))
+```
+
