@@ -5,24 +5,12 @@ output:
     keep_md: true
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-library(mclust)
-library(flowCore)
-library(tidyverse)
-library(patchwork)
-library(tidymodels)
-library(ggridges)
-library(ggforce)
 
-
-data("GvHD")
-```
 
 Start by loading the data and make it into a tibble with the relevant list columns:
 
-```{r, echo = TRUE}
 
+``` r
 gvhd_tibble <- tibble(
   exprs = purrr::map(GvHD, ~ exprs(.x)),                                                            # Expression data
   keywords = purrr::map(GvHD, ~ keyword(.x)),                                                       # Meta data
@@ -31,41 +19,34 @@ gvhd_tibble <- tibble(
 
 head(gvhd_tibble)
 ```
+
+```
+## # A tibble: 6 × 3
+##   exprs              keywords           exprs_tibble         
+##   <list>             <list>             <list>               
+## 1 <dbl [3,420 × 8]>  <named list [170]> <tibble [3,420 × 9]> 
+## 2 <dbl [3,405 × 8]>  <named list [170]> <tibble [3,405 × 9]> 
+## 3 <dbl [3,435 × 8]>  <named list [170]> <tibble [3,435 × 9]> 
+## 4 <dbl [8,550 × 8]>  <named list [170]> <tibble [8,550 × 9]> 
+## 5 <dbl [10,410 × 8]> <named list [170]> <tibble [10,410 × 9]>
+## 6 <dbl [3,750 × 8]>  <named list [170]> <tibble [3,750 × 9]>
+```
 The 'cell gate' will be set using `FSC-H` and `SSC-H` columns. Since the expression
 is wildly different between samples, our solution must allow for this: 
 
-```{r, echo = FALSE, warning=FALSE}
 
-dotplot_list <- gvhd_tibble$exprs_tibble |> purrr::map(function(.x) {
-      ggplot(data= .x, aes(x = `FSC-H`, y = `SSC-H`)) +
-        geom_hex()
-    }
-  )
-
-fsch_list <- gvhd_tibble$exprs_tibble |> purrr::map(function(.x) {
-      ggplot(data= .x, aes(x = `FSC-H`)) +
-        geom_histogram()
-    }
-  )
-
-ssch_list <- gvhd_tibble$exprs_tibble |> purrr::map(function(.x) {
-      ggplot(data= .x, aes(x = `SSC-H`)) +
-        geom_histogram()
-    }
-  )
-
-# Visually inspect a subset of the data
-indeces <- 1:4
-
-wrap_plots(
-  c(dotplot_list[indeces], 
-    fsch_list[indeces], 
-    ssch_list[indeces]
-    ), 
-  nrow = 3, 
-  guides = 'collect'
-)
 ```
+## `stat_bin()` using `bins = 30`. Pick better value with `binwidth`.
+## `stat_bin()` using `bins = 30`. Pick better value with `binwidth`.
+## `stat_bin()` using `bins = 30`. Pick better value with `binwidth`.
+## `stat_bin()` using `bins = 30`. Pick better value with `binwidth`.
+## `stat_bin()` using `bins = 30`. Pick better value with `binwidth`.
+## `stat_bin()` using `bins = 30`. Pick better value with `binwidth`.
+## `stat_bin()` using `bins = 30`. Pick better value with `binwidth`.
+## `stat_bin()` using `bins = 30`. Pick better value with `binwidth`.
+```
+
+![](gating_files/figure-html/unnamed-chunk-2-1.png)<!-- -->
 
 We will start by filtering the data to remove the outliers using `dbscan`. It 
 requires the two arguments `minPts` and `eps`. The `minPts` is the minimum number 
@@ -74,7 +55,8 @@ between two points to be considered in the same cluster.
 
 The `kNNdistplot` function can be used to visually inspect `eps` given `minPts`:
 
-```{r}
+
+``` r
 gvhd_tibble$exprs_tibble[[2]] |> 
   select(2:3) |> # This is the FSC-H and SSC-H columns
   dbscan::kNNdistplot(minPts = 50)
@@ -82,8 +64,11 @@ gvhd_tibble$exprs_tibble[[2]] |>
 abline(h = 100) # Corresponds to the eps value - sets cut off against outliers
 ```
 
+![](gating_files/figure-html/unnamed-chunk-3-1.png)<!-- -->
+
 Filtering out the outliers using the parameters determined by the `kNNdistplot`:
-```{r}
+
+``` r
 # Map the dbscan over the exprs_tibble column
 dbscan_res <- purrr::map(gvhd_tibble$exprs_tibble, function(.x) {
   .x |> 
@@ -105,12 +90,29 @@ dbscan_filt <- purrr::map2(dbscan_res, gvhd_tibble$exprs_tibble, function(.x, .y
 dbscan_filt[[1]]
 ```
 
+```
+## # A tibble: 3,420 × 5
+##    event_id `FSC-H` `SSC-H` .cluster noise
+##       <int>   <dbl>   <dbl> <fct>    <lgl>
+##  1        1     371     396 1        FALSE
+##  2        2     190      62 1        FALSE
+##  3        3     141     197 1        FALSE
+##  4        4     167     265 1        FALSE
+##  5        5     128      30 1        FALSE
+##  6        6     208      60 1        FALSE
+##  7        7     172     280 1        FALSE
+##  8        8     236     309 1        FALSE
+##  9        9     353      87 1        FALSE
+## 10       10      85     127 1        FALSE
+## # ℹ 3,410 more rows
+```
+
 We can see that `dbscan` did a pretty good job but we still have outliers 
 (`noise = TRUE`)in the data - especially events on the border. 
 These will have to be filtered out in our recipe.
 
-```{r}
 
+``` r
 # Recipe for pre-processing the data
 mclust_rec <- recipes::recipe(~ `FSC-H` + `SSC-H` + `noise` + `event_id`, data = dbscan_filt[[1]]) |>
   step_filter(noise == FALSE) |> 
@@ -135,17 +137,19 @@ plot_list <- mclust_bake |>
   )
 
 wrap_plots(plot_list[1:12], nrow = 3, guides = 'collect')
-
 ```
 
-Now we can cluster the data using the `Mclust` function from the `mclust` package. 
-```{r}
-mclust_res <- purrr::map(mclust_bake, \(.x) mclust::Mclust(.x[, c(1:2)], G = 1:2))
+![](gating_files/figure-html/unnamed-chunk-5-1.png)<!-- -->
 
+Now we can cluster the data using the `Mclust` function from the `mclust` package. 
+
+``` r
+mclust_res <- purrr::map(mclust_bake, \(.x) mclust::Mclust(.x[, c(1:2)], G = 1:2))
 ```
 
 And augment the data with the cluster information:
-```{r}
+
+``` r
 mclust_aug <- purrr::map2(mclust_res, mclust_bake, augment)
 
 # Add this information to the original data
@@ -159,7 +163,8 @@ mclust_result <- purrr::map2(gvhd_tibble$exprs_tibble, mclust_aug, \(.x, .y) {
 }) 
 ```
 
-```{r}
+
+``` r
 dbscan_res <- purrr::map(mclust_bake, function(.x) dbscan::dbscan(.x |> select(1:2), minPts = 50, eps = 40))
 
 dbscan_aug <- purrr::map2(dbscan_res, mclust_bake, augment)
@@ -172,13 +177,13 @@ dbscan_result <- purrr::map2(gvhd_tibble$exprs_tibble, dbscan_aug, \(.x, .y) {
       .cluster = fct_na_value_to_level(.cluster, '0')
       )
 }) 
-
 ```
 
 And visually inspect the result:
 
 Mclust
-```{r}
+
+``` r
 plot_list <- mclust_result |> 
   purrr::map(~ ggplot(data = .x, aes(x = `FSC-H`, y = `SSC-H`, color = .class)) +
     geom_point()
@@ -187,8 +192,11 @@ plot_list <- mclust_result |>
 wrap_plots(plot_list[1:12], nrow = 3, guides = 'collect') 
 ```
 
+![](gating_files/figure-html/unnamed-chunk-9-1.png)<!-- -->
+
 dbscan
-```{r}
+
+``` r
 plot_list <- dbscan_result |> 
   purrr::map(~ ggplot(data = .x, aes(x = `FSC-H`, y = `SSC-H`, color = .cluster)) +
     geom_point()
@@ -197,9 +205,12 @@ plot_list <- dbscan_result |>
 wrap_plots(plot_list[1:12], nrow = 3, guides = 'collect') 
 ```
 
+![](gating_files/figure-html/unnamed-chunk-10-1.png)<!-- -->
+
 
 Finally, we can save the data to a file:
-```{r}
+
+``` r
 final_output <- gvhd_tibble |> 
   mutate(
     cell_gate_mclust = mclust_result,
