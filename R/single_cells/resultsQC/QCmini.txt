@@ -1,0 +1,4 @@
+Name file	n. of events	% anomalies	analysis from	% anomalies flow Rate	% anomalies Signal	% anomalies Margins
+Bcells1	64562	41.64	Flow Rate, Flow Signal and Flow Margin	32.84	12.49	7.97
+Bcells2	30562	27.53	Flow Rate, Flow Signal and Flow Margin	24.85	0	3.55
+Bcells3	30000	43.36	Flow Rate, Flow Signal and Flow Margin	42.4	0	1.64

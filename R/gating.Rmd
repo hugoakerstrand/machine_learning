@@ -21,7 +21,7 @@ data("GvHD")
 
 Start by loading the data and make it into a tibble with the relevant list columns:
 
-```{r, echo = TRUE}
+```{r}
 
 gvhd_tibble <- tibble(
   exprs = purrr::map(GvHD, ~ exprs(.x)),                                                            # Expression data

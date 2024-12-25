@@ -1,0 +1,66 @@
+---
+title: "single_cells"
+author: "Hugo Åkerstrand"
+date: "2024-12-25"
+output: 
+  html_document: 
+    keep_md: true
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+library(flowAI)
+library(flowCore)
+library(tidyverse)
+library(patchwork)
+data("Bcells")
+```
+
+# Introduction
+
+```{r}
+b_cleaned <- flowAI::flow_auto_qc(Bcells)
+```
+
+```{r}
+b_tibble <- tibble(
+  exprs = purrr::map(b_cleaned, ~ exprs(.x)),                                                            # Expression data
+  keywords = purrr::map(b_cleaned, ~ keyword(.x)),                                                       # Meta data
+  exprs_tibble = purrr::map(exprs, function(.x) as_tibble(.x) |> rowid_to_column(var = 'event_id'))      # For gating
+)
+
+head(b_tibble)
+```
+
+```{r, echo = FALSE, warning=FALSE}
+
+dotplot_list <- b_tibble$exprs_tibble |> purrr::map(function(.x) {
+      ggplot(data = .x, aes(x = `FSC-A`, y = `SSC-A`)) +
+        geom_hex()
+    }
+  )
+
+fsch_list <- b_tibble$exprs_tibble |> purrr::map(function(.x) {
+      ggplot(data = .x, aes(x = `FSC-A`)) +
+        geom_histogram()
+    }
+  )
+
+ssch_list <- b_tibble$exprs_tibble |> purrr::map(function(.x) {
+      ggplot(data = .x, aes(x = `SSC-A`)) +
+        geom_histogram()
+    }
+  )
+
+# Visually inspect a subset of the data
+indeces <- 1:4
+
+wrap_plots(
+  c(dotplot_list[indeces], 
+    fsch_list[indeces], 
+    ssch_list[indeces]
+    ), 
+  nrow = 3, 
+  guides = 'collect'
+)
+```
