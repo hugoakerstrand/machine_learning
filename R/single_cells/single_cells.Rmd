@@ -1,0 +1,113 @@
+---
+title: "single_cells"
+author: "Hugo Åkerstrand"
+date: "2024-12-25"
+output: 
+  html_document: 
+    keep_md: true
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+library(flowAI)
+library(flowCore)
+library(tidyverse)
+library(patchwork)
+library(tidymodels)
+library(glmnet)
+data("Bcells")
+```
+
+# Introduction
+
+```{r}
+b_cleaned <- flowAI::flow_auto_qc(Bcells)
+```
+
+```{r}
+b_tibble <- tibble(
+  exprs = purrr::map(b_cleaned, ~ exprs(.x)),                                                            # Expression data
+  keywords = purrr::map(b_cleaned, ~ keyword(.x)),                                                       # Meta data
+  exprs_tibble = purrr::map(exprs, function(.x) as_tibble(.x) |> rowid_to_column(var = 'event_id'))      # For gating
+)
+
+head(b_tibble)
+```
+
+```{r, echo = FALSE, warning=FALSE}
+
+dotplot_list <- b_tibble$exprs_tibble |> purrr::map(function(.x) {
+      ggplot(data = .x, aes(x = `FSC-A`, y = `FSC-H`)) +
+        geom_hex()
+    }
+  )
+
+fsch_list <- b_tibble$exprs_tibble |> purrr::map(function(.x) {
+      ggplot(data = .x, aes(x = `FSC-A`)) +
+        geom_histogram()
+    }
+  )
+
+ssch_list <- b_tibble$exprs_tibble |> purrr::map(function(.x) {
+      ggplot(data = .x, aes(x = `FSC-H`)) +
+        geom_histogram()
+    }
+  )
+
+# Visually inspect a subset of the data
+indeces <- 1:3
+
+wrap_plots(
+  c(dotplot_list[indeces], 
+    fsch_list[indeces], 
+    ssch_list[indeces]
+    ), 
+  nrow = 3, 
+  guides = 'collect'
+)
+```
+
+```{r}
+linear_spec <- linear_reg() %>%
+  set_engine("lm") |> 
+  set_mode("regression")
+
+sc_rec <- recipes::recipe(data = b_tibble$exprs_tibble[[1]], `FSC-A` ~ `FSC-H`) |> 
+  step_filter(between(`FSC-A`, 1e03, 2e05), between(`FSC-H`, 1e03, 2e05)) |> 
+  step_BoxCox()
+
+sc_wflow <- workflow() |> 
+  add_recipe(sc_rec) |> 
+  add_model(linear_spec) 
+
+sc_fit <- purrr::map(b_tibble$exprs_tibble, function(.x) fit(sc_wflow, .x))
+
+sc_ci <- purrr::map2(sc_fit, b_tibble$exprs_tibble, function(.x, .y) {
+  predict(.x, type = 'pred_int', new_data = .y, level = 0.8)
+})
+
+sc_aug <- purrr::map2(sc_fit, b_tibble$exprs_tibble, function(.x, .y) augment(.x, .y)) |> 
+  purrr::map2(sc_ci,  ~ bind_cols(.x, .y))
+
+```
+
+```{r}
+sc_aug[[1]] |> select(contains('.pred'), 'FSC-A','FSC-H')
+sc_aug[[1]] |> dplyr::filter(`FSC-A` >= .pred_lower & `FSC-A` <= .pred_upper)
+```
+
+```{r}
+
+plot_list <- purrr::map(sc_aug, function(.x) {
+  .x |>
+    mutate(outlier = case_when(
+    `FSC-A` < .pred_lower ~ 'low',
+    `FSC-A` > .pred_upper ~ 'high',
+    TRUE ~ 'normal'
+  )) |>
+  ggplot(aes(x = `FSC-A`, y = `FSC-H`)) +
+  geom_point(aes(color = outlier))
+})
+
+wrap_plots(plot_list, nrow = 3, guides = 'collect')
+```
