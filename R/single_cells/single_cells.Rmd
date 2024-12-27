@@ -78,43 +78,50 @@ wrap_plots(
 )
 ```
 
+The linear regression model is then trained on the data and used to predict the 
+`FSC-A` given `FSC-H`. The model is then used to predict the 80% prediction interval
+and keep only these cells. The cells outside the interval are considered to be outliers.
+
 ```{r}
-linear_spec <- linear_reg() %>%
-  set_engine("lm") |> 
-  set_mode("regression")
 
-sc_rec <- recipes::recipe(data = b_tibble$exprs_tibble[[1]], `FSC-A` ~ `FSC-H`) |> 
-  step_filter(between(`FSC-A`, 1e03, 2e05), between(`FSC-H`, 1e03, 2e05)) |> 
-  step_BoxCox()
+linear_spec <- linear_reg() %>% # Create a linear regression model
+  set_engine("lm") |>           # Use the lm engine 
+  set_mode("regression")        # Set mode to regression
 
-sc_wflow <- workflow() |> 
-  add_recipe(sc_rec) |> 
-  add_model(linear_spec) 
+sc_rec <- recipes::recipe(data = b_tibble$exprs_tibble[[1]], `FSC-A` ~ `FSC-H`) |> # Create a recipe where FSC-A is predicted by FSC-H
+  step_filter(between(`FSC-A`, 1e03, 2e05), between(`FSC-H`, 1e03, 2e05)) |>       # Filter out extreme values
+  step_BoxCox()                                                                    # Transform the data
 
-sc_fit <- purrr::map(b_tibble$exprs_tibble, function(.x) fit(sc_wflow, .x))
+sc_wflow <- workflow() |> # Create a workflow
+  add_recipe(sc_rec) |>   # Add the recipe
+  add_model(linear_spec)  # Add the model
+
+sc_fit <- purrr::map(b_tibble$exprs_tibble, function(.x) fit(sc_wflow, .x)) # Fit the model to the data
 
 sc_ci <- purrr::map2(sc_fit, b_tibble$exprs_tibble, function(.x, .y) {
-  predict(.x, type = 'pred_int', new_data = .y, level = 0.8)
+  predict(.x, type = 'pred_int', new_data = .y, level = 0.8) # Predict the 80% prediction interval
 })
 
-sc_aug <- purrr::map2(sc_fit, b_tibble$exprs_tibble, function(.x, .y) augment(.x, .y)) |> 
-  purrr::map2(sc_ci,  ~ bind_cols(.x, .y))
+sc_aug <- purrr::map2(sc_fit, b_tibble$exprs_tibble, function(.x, .y) augment(.x, .y)) |> # Augment the data with the predicted values
+  purrr::map2(sc_ci,  ~ bind_cols(.x, .y))                                                # Augment the data with the prediction interval
 
 ```
 
+The data is then filtered to only include cells within the 80% prediction interval.
 ```{r}
-sc_aug[[1]] |> select(contains('.pred'), 'FSC-A','FSC-H')
-sc_aug[[1]] |> dplyr::filter(`FSC-A` >= .pred_lower & `FSC-A` <= .pred_upper)
+sc_aug[[1]] |> select(contains('.pred'), 'FSC-A','FSC-H')                     # Before
+sc_aug[[1]] |> dplyr::filter(`FSC-A` >= .pred_lower & `FSC-A` <= .pred_upper) # After
 ```
 
+Plot the data with the outliers colored.
 ```{r}
 
 plot_list <- purrr::map(sc_aug, function(.x) {
   .x |>
     mutate(outlier = case_when(
-    `FSC-A` < .pred_lower ~ 'low',
-    `FSC-A` > .pred_upper ~ 'high',
-    TRUE ~ 'normal'
+    `FSC-A` < .pred_lower ~ 'outlier',
+    `FSC-A` > .pred_upper ~ 'outlier',
+    TRUE ~ 'single_cell'
   )) |>
   ggplot(aes(x = `FSC-A`, y = `FSC-H`)) +
   geom_point(aes(color = outlier))

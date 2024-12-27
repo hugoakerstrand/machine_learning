@@ -18,3 +18,6 @@ Bcells3	30000	14.1	Flow Rate, Flow Signal and Flow Margin	12.66	0	1.64
 Bcells1	64562	24.72	Flow Rate, Flow Signal and Flow Margin	23.34	12.49	7.97
 Bcells2	30562	66.32	Flow Rate, Flow Signal and Flow Margin	65.57	0	3.55
 Bcells3	30000	14.1	Flow Rate, Flow Signal and Flow Margin	12.66	0	1.64
+Bcells1	64562	41.64	Flow Rate, Flow Signal and Flow Margin	32.84	12.49	7.97
+Bcells2	30562	27.53	Flow Rate, Flow Signal and Flow Margin	24.85	0	3.55
+Bcells3	30000	43.36	Flow Rate, Flow Signal and Flow Margin	42.4	0	1.64

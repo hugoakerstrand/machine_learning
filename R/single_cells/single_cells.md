@@ -30,7 +30,7 @@ library(tidyverse)
 ## ✔ dplyr     1.1.4     ✔ readr     2.1.5
 ## ✔ forcats   1.0.0     ✔ stringr   1.5.1
 ## ✔ ggplot2   3.5.1     ✔ tibble    3.2.1
-## ✔ lubridate 1.9.3     ✔ tidyr     1.3.1
+## ✔ lubridate 1.9.4     ✔ tidyr     1.3.1
 ## ✔ purrr     1.0.2     
 ## ── Conflicts ────────────────────────────────────────── tidyverse_conflicts() ──
 ## ✖ dplyr::filter() masks flowCore::filter(), stats::filter()
@@ -45,19 +45,12 @@ library(tidymodels)
 
 ```
 ## ── Attaching packages ────────────────────────────────────── tidymodels 1.2.0 ──
-## ✔ broom        1.0.6     ✔ rsample      1.2.1
+## ✔ broom        1.0.7     ✔ rsample      1.2.1
 ## ✔ dials        1.3.0     ✔ tune         1.2.1
 ## ✔ infer        1.0.7     ✔ workflows    1.1.4
 ## ✔ modeldata    1.4.0     ✔ workflowsets 1.1.0
 ## ✔ parsnip      1.2.1     ✔ yardstick    1.3.1
-## ✔ recipes      1.1.0
-```
-
-```
-## Warning: package 'modeldata' was built under R version 4.4.2
-```
-
-```
+## ✔ recipes      1.1.0     
 ## ── Conflicts ───────────────────────────────────────── tidymodels_conflicts() ──
 ## ✖ scales::discard()  masks purrr::discard()
 ## ✖ dplyr::filter()    masks flowCore::filter(), stats::filter()
@@ -66,7 +59,7 @@ library(tidymodels)
 ## ✖ tune::parameters() masks dials::parameters(), flowCore::parameters()
 ## ✖ yardstick::spec()  masks readr::spec()
 ## ✖ recipes::step()    masks stats::step()
-## • Use tidymodels_prefer() to resolve common conflicts.
+## • Learn how to get started at https://www.tidymodels.org/start/
 ```
 
 ``` r
@@ -79,15 +72,15 @@ b_cleaned <- flowAI::flow_auto_qc(Bcells, html_report = FALSE) # has to be set t
 
 ```
 ## Quality control for the file: Bcells1
-## 23.34% of anomalous cells detected in the flow rate check. 
+## 32.84% of anomalous cells detected in the flow rate check. 
 ## 12.49% of anomalous cells detected in signal acquisition check. 
 ## 7.97% of anomalous cells detected in the dynamic range check. 
 ## Quality control for the file: Bcells2
-## 65.57% of anomalous cells detected in the flow rate check. 
+## 24.85% of anomalous cells detected in the flow rate check. 
 ## 0% of anomalous cells detected in signal acquisition check. 
 ## 3.55% of anomalous cells detected in the dynamic range check. 
 ## Quality control for the file: Bcells3
-## 12.66% of anomalous cells detected in the flow rate check. 
+## 42.4% of anomalous cells detected in the flow rate check. 
 ## 0% of anomalous cells detected in signal acquisition check. 
 ## 1.64% of anomalous cells detected in the dynamic range check.
 ```
@@ -109,9 +102,9 @@ head(b_tibble)
 ## # A tibble: 3 × 3
 ##   exprs               keywords           exprs_tibble          
 ##   <list>              <list>             <list>                
-## 1 <dbl [48,604 × 13]> <named list [209]> <tibble [48,604 × 14]>
-## 2 <dbl [10,292 × 13]> <named list [209]> <tibble [10,292 × 14]>
-## 3 <dbl [25,769 × 13]> <named list [209]> <tibble [25,769 × 14]>
+## 1 <dbl [37,680 × 13]> <named list [209]> <tibble [37,680 × 14]>
+## 2 <dbl [22,149 × 13]> <named list [209]> <tibble [22,149 × 14]>
+## 3 <dbl [16,993 × 13]> <named list [209]> <tibble [16,993 × 14]>
 ```
 
 For gating singlets we will use the parameters `FSC-A` and `FSC-H`. A visual inspection
@@ -131,85 +124,91 @@ but this example on focuses on the `FSC-A` and `FSC-H` gating of singlets.
 
 ![](single_cells_files/figure-html/unnamed-chunk-3-1.png)<!-- -->
 
+The linear regression model is then trained on the data and used to predict the 
+`FSC-A` given `FSC-H`. The model is then used to predict the 80% prediction interval
+and keep only these cells. The cells outside the interval are considered to be outliers.
+
 
 ``` r
-linear_spec <- linear_reg() %>%
-  set_engine("lm") |> 
-  set_mode("regression")
+linear_spec <- linear_reg() %>% # Create a linear regression model
+  set_engine("lm") |>           # Use the lm engine 
+  set_mode("regression")        # Set mode to regression
 
-sc_rec <- recipes::recipe(data = b_tibble$exprs_tibble[[1]], `FSC-A` ~ `FSC-H`) |> 
-  step_filter(between(`FSC-A`, 1e03, 2e05), between(`FSC-H`, 1e03, 2e05)) |> 
-  step_BoxCox()
+sc_rec <- recipes::recipe(data = b_tibble$exprs_tibble[[1]], `FSC-A` ~ `FSC-H`) |> # Create a recipe where FSC-A is predicted by FSC-H
+  step_filter(between(`FSC-A`, 1e03, 2e05), between(`FSC-H`, 1e03, 2e05)) |>       # Filter out extreme values
+  step_BoxCox()                                                                    # Transform the data
 
-sc_wflow <- workflow() |> 
-  add_recipe(sc_rec) |> 
-  add_model(linear_spec) 
+sc_wflow <- workflow() |> # Create a workflow
+  add_recipe(sc_rec) |>   # Add the recipe
+  add_model(linear_spec)  # Add the model
 
-sc_fit <- purrr::map(b_tibble$exprs_tibble, function(.x) fit(sc_wflow, .x))
+sc_fit <- purrr::map(b_tibble$exprs_tibble, function(.x) fit(sc_wflow, .x)) # Fit the model to the data
 
 sc_ci <- purrr::map2(sc_fit, b_tibble$exprs_tibble, function(.x, .y) {
-  predict(.x, type = 'pred_int', new_data = .y, level = 0.8)
+  predict(.x, type = 'pred_int', new_data = .y, level = 0.8) # Predict the 80% prediction interval
 })
 
-sc_aug <- purrr::map2(sc_fit, b_tibble$exprs_tibble, function(.x, .y) augment(.x, .y)) |> 
-  purrr::map2(sc_ci,  ~ bind_cols(.x, .y))
+sc_aug <- purrr::map2(sc_fit, b_tibble$exprs_tibble, function(.x, .y) augment(.x, .y)) |> # Augment the data with the predicted values
+  purrr::map2(sc_ci,  ~ bind_cols(.x, .y))                                                # Augment the data with the prediction interval
 ```
 
+The data is then filtered to only include cells within the 80% prediction interval.
 
 ``` r
-sc_aug[[1]] |> select(contains('.pred'), 'FSC-A','FSC-H')
+sc_aug[[1]] |> select(contains('.pred'), 'FSC-A','FSC-H')                     # Before
 ```
 
 ```
-## # A tibble: 48,604 × 5
+## # A tibble: 37,680 × 5
 ##      .pred .pred_lower .pred_upper `FSC-A` `FSC-H`
 ##      <dbl>       <dbl>       <dbl>   <dbl>   <dbl>
-##  1 103904.      93263.     114545.  94081.   85938
-##  2  25829.      15187.      36470.  27751.   22111
-##  3  40242.      29601.      50883.  54993.   33894
-##  4 134483.     123842.     145124. 123255.  110936
-##  5 126109.     115468.     136750. 119127.  104090
-##  6 145690.     135049.     156331. 151935.  120098
-##  7 172768.     162127.     183409. 176497.  142234
-##  8 174384.     163743.     185025. 184517.  143555
-##  9 135822.     125181.     146464. 126629.  112031
-## 10 107285.      96644.     117926. 120084.   88702
-## # ℹ 48,594 more rows
+##  1  35828.      25221.      46435.  30611.   30290
+##  2 128927.     118321.     139534. 124112.  106378
+##  3 139724.     129117.     150331. 134708.  115202
+##  4 119952.     109346.     130559. 119503.   99043
+##  5 143493.     132886.     154099. 136813.  118282
+##  6  46019.      35412.      56626.  39552.   38619
+##  7 158847.     148240.     169454. 164848.  130831
+##  8 168915.     158308.     179522. 170479.  139059
+##  9 131187.     120580.     141794. 122279.  108225
+## 10 116852.     106245.     127459. 112717.   96509
+## # ℹ 37,670 more rows
 ```
 
 ``` r
-sc_aug[[1]] |> dplyr::filter(`FSC-A` >= .pred_lower & `FSC-A` <= .pred_upper)
+sc_aug[[1]] |> dplyr::filter(`FSC-A` >= .pred_lower & `FSC-A` <= .pred_upper) # After
 ```
 
 ```
-## # A tibble: 40,178 × 18
+## # A tibble: 31,075 × 18
 ##      .pred .resid event_id `FSC-A` `FSC-H` `SSC-A` `SSC-H` `APC-Cy7-A`
 ##      <dbl>  <dbl>    <int>   <dbl>   <dbl>   <dbl>   <dbl>       <dbl>
-##  1 103904. -9823.        1  94081.   85938  89924.   82838        601.
-##  2  25829.  1923.        2  27751.   22111  27091.   18591       4420 
-##  3 126109. -6982.        5 119127.  104090  38621.   35738        664.
-##  4 145690.  6244.        6 151935.  120098 135744.  116550       5845.
-##  5 172768.  3729.        7 176497.  142234 141455.  118622       4368.
-##  6 174384. 10133.        8 184517.  143555 152677.  128387       5012.
-##  7 135822. -9194.        9 126629.  112031  47912.   44299        994.
-##  8 125512. -7339.       13 118173.  103602  47515.   44594       1136.
-##  9 132621. -7478.       14 125143.  109414  46935.   43158        141.
-## 10 135270. -7347.       16 127922.  111579  43722.   40251        344.
-## # ℹ 40,168 more rows
+##  1  35828. -5217.        1  30611.   30290  22763.   21638       888. 
+##  2 128927. -4815.        2 124112.  106378  51945.   47978       633. 
+##  3 139724. -5016.        3 134708.  115202  57564.   53426      1052. 
+##  4 119952.  -450.        4 119503.   99043  55520.   46871      1241  
+##  5 143493. -6679.        5 136813.  118282  66030.   57550       952  
+##  6  46019. -6467.        6  39552.   38619  10252    10383       -97.8
+##  7 158847.  6001.        7 164848.  130831 113377.   96127      6571. 
+##  8 168915.  1564.        8 170479.  139059 112870.   99507      5448. 
+##  9 131187. -8908.        9 122279.  108225  63987.   59089      1942. 
+## 10 116852. -4135.       10 112717.   96509  43555.   38809      1538. 
+## # ℹ 31,065 more rows
 ## # ℹ 10 more variables: `Pacific Blue-A` <dbl>, `AmCyan-A` <dbl>,
 ## #   `Qdot 605-A` <dbl>, `Qdot 655-A` <dbl>, `PE-A` <dbl>,
 ## #   `PE-Texas Red-A` <dbl>, `PE-Cy7-A` <dbl>, Time <dbl>, .pred_lower <dbl>,
 ## #   .pred_upper <dbl>
 ```
 
+Plot the data with the outliers colored.
 
 ``` r
 plot_list <- purrr::map(sc_aug, function(.x) {
   .x |>
     mutate(outlier = case_when(
-    `FSC-A` < .pred_lower ~ 'low',
-    `FSC-A` > .pred_upper ~ 'high',
-    TRUE ~ 'normal'
+    `FSC-A` < .pred_lower ~ 'outlier',
+    `FSC-A` > .pred_upper ~ 'outlier',
+    TRUE ~ 'single_cell'
   )) |>
   ggplot(aes(x = `FSC-A`, y = `FSC-H`)) +
   geom_point(aes(color = outlier))
