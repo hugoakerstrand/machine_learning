@@ -26,6 +26,7 @@ library(patchwork)
 library(tidymodels)
 data("Bcells")
 ```
+
 ```{r}
 b_cleaned <- flowAI::flow_auto_qc(Bcells, html_report = FALSE) # has to be set to FALSE else render fails
 ```

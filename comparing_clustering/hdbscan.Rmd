@@ -1,0 +1,60 @@
+---
+title: "comparing clustering algorithms: dbscan & hdbscan"
+author: "Hugo Åkerstrand"
+date: "2025-01-02"
+output: 
+  html_document: 
+    keep_md: true
+---
+
+# Introduction
+
+Gating single cells is absolutely necessary to avoid the false positive, cells 
+aggregates that naturally have a higher fluorescence signal relative to that of 
+a single cell. Thus, proper data analysis requires comparison of only single cells. 
+This is a simple example of how to gate out single cells using a linear regression model.
+
+Data to be used comes from the `flowAI` package and is simultaneously loaded and
+cleaned using `flow_auto_qc`.
+
+```{r setup, include=TRUE, echo=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dbscan)
+library(flowCore)
+data(GvHD)
+library(tidyverse)
+library(patchwork)
+```
+
+Start by loading the data and make it into a tibble with the relevant list columns:
+
+```{r}
+
+gvhd_tibble <- tibble(
+  exprs = purrr::map(GvHD, ~ exprs(.x)),                                                            # Expression data
+  keywords = purrr::map(GvHD, ~ keyword(.x)),                                                       # Meta data
+  exprs_tibble = purrr::map(exprs, function(.x) as_tibble(.x) |> rowid_to_column(var = 'event_id')) # For gating
+)
+
+head(gvhd_tibble)
+```
+
+```{r}
+test <- gvhd_tibble$exprs_tibble[[1]]
+
+test |> 
+   ggplot(aes(x = `FSC-H`, y = `SSC-H`)) +
+        geom_hex()
+```
+
+```{r}
+minPts <- c(10, 20, 50, 100)
+results <- map(minPts, ~dbscan::hdbscan(test, minPts = .x, minClustSize = 1))
+plot_list <- map(results, function(.x){
+  bind_cols(test, cluster = .x$cluster) |> 
+    ggplot(aes(x = `FSC-H`, y = `SSC-H`, color = as.factor(cluster))) +
+    geom_point(alpha = 0.2 ) +
+    ggtitle(label = paste("minPts =", .x$minPts))
+})
+wrap_plots(plot_list)
+```
