@@ -15,7 +15,6 @@ library(tidymodels)
 library(ggridges)
 library(ggforce)
 
-
 data("GvHD")
 ```
 
