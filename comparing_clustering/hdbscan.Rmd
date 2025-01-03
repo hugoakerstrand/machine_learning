@@ -70,3 +70,40 @@ hdbscan_50 <- dbscan::hdbscan(test, minPts = 50, gen_hdbscan_tree = TRUE)
 plot(hdbscan_50)
 
 ```
+
+```{r}
+
+# Recipe for pre-processing the data
+mclust_rec <- recipes::recipe(~ `FSC-H` + `SSC-H` + `event_id`, data = test) |>
+  update_role(event_id, new_role = 'id variable') |> 
+  step_filter(`SSC-H` < 975 & `SSC-H` > 25 & `FSC-H` < 975 & `FSC-H` > 25) |> 
+  recipes::step_BoxCox(`FSC-H`, `SSC-H`)
+
+# Prep the recipe on the dbscan filtered data
+mclust_prep <- recipes::prep(mclust_rec, test)
+
+# And then call it 
+mclust_bake <- recipes::bake(mclust_prep, new_data = NULL)
+
+# And visually inspect the result
+mclust_bake |> 
+  ggplot(aes(x = `FSC-H`, y = `SSC-H`)) +
+    geom_hex() +
+    theme_minimal() +
+    scale_y_continuous(
+      expand = expansion(mult = c(0.1, 0.1)),
+      )
+
+```
+
+```{r}
+minPts <- c(10, 20, 50, 100)
+results <- map(minPts, ~dbscan::hdbscan(mclust_bake, minPts = .x))
+plot_list <- map(results, function(.x){
+  bind_cols(mclust_bake, cluster = .x$cluster) |> 
+    ggplot(aes(x = `FSC-H`, y = `SSC-H`, color = as.factor(cluster))) +
+    geom_point(alpha = 0.2 ) +
+    ggtitle(label = paste("minPts =", .x$minPts))
+})
+wrap_plots(plot_list)
+```
