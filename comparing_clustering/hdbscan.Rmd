@@ -9,13 +9,8 @@ output:
 
 # Introduction
 
-Gating single cells is absolutely necessary to avoid the false positive, cells 
-aggregates that naturally have a higher fluorescence signal relative to that of 
-a single cell. Thus, proper data analysis requires comparison of only single cells. 
-This is a simple example of how to gate out single cells using a linear regression model.
-
-Data to be used comes from the `flowAI` package and is simultaneously loaded and
-cleaned using `flow_auto_qc`.
+This document explores the underlying math of `dbscan` functions `dbscan` and `hdbscan`. 
+The goal is to compare the two algorithms and see how they perform on flow cytometry data.
 
 ```{r setup, include=TRUE, echo=TRUE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -24,6 +19,7 @@ library(flowCore)
 data(GvHD)
 library(tidyverse)
 library(patchwork)
+library(tidymodels)
 ```
 
 Start by loading the data and make it into a tibble with the relevant list columns:
@@ -39,6 +35,8 @@ gvhd_tibble <- tibble(
 head(gvhd_tibble)
 ```
 
+For EDA, we will only use the first sample in the data set.
+
 ```{r}
 test <- gvhd_tibble$exprs_tibble[[1]]
 
@@ -47,9 +45,15 @@ test |>
         geom_hex()
 ```
 
+First we will look at the hdsbscan code
+
+```{r}
+dbscan::hdbscan
+```
+Let's try some different `minPts` values and see how the clustering changes.
 ```{r}
 minPts <- c(10, 20, 50, 100)
-results <- map(minPts, ~dbscan::hdbscan(test, minPts = .x, minClustSize = 1))
+results <- map(minPts, ~dbscan::hdbscan(test, minPts = .x))
 plot_list <- map(results, function(.x){
   bind_cols(test, cluster = .x$cluster) |> 
     ggplot(aes(x = `FSC-H`, y = `SSC-H`, color = as.factor(cluster))) +
@@ -57,4 +61,12 @@ plot_list <- map(results, function(.x){
     ggtitle(label = paste("minPts =", .x$minPts))
 })
 wrap_plots(plot_list)
+```
+
+Continue with `minPts = 50`
+
+```{r}
+hdbscan_50 <- dbscan::hdbscan(test, minPts = 50, gen_hdbscan_tree = TRUE)
+plot(hdbscan_50)
+
 ```
